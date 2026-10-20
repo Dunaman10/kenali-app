@@ -28,6 +28,14 @@ import {
 } from "@/lib/mock-data";
 import type { Database } from "@/lib/database.types";
 
+import {
+  type AvatarVariantType,
+  type CardThemeId,
+  calculateStreakProgress,
+  type StreakUpdateResult,
+  getTodayDateString,
+} from "@/lib/gamification";
+
 // ============================================================================
 // 1. DEMO PROFILES (Selalu tersedia untuk Demo Siswa, BK, & Mahasiswa)
 // ============================================================================
@@ -43,10 +51,16 @@ export interface DemoUserProfile {
   gender: "Laki-laki" | "Perempuan";
   xpPoints: number;
   streakDays: number;
+  currentStreak: number;
+  highestStreak: number;
+  lastActiveDate: string | null;
+  avatarSeed: string;
+  avatarVariant: AvatarVariantType;
+  selectedBadge: string;
+  cardTheme: CardThemeId;
   collectedStars: number;
   completedLevels: number[];
   targetUrl: string;
-  avatarSeed: string;
 }
 
 export const DEMO_USERS: Record<string, DemoUserProfile> = {
@@ -59,12 +73,18 @@ export const DEMO_USERS: Record<string, DemoUserProfile> = {
     grade: "8B",
     school: "SMP Al-Falah Rempoa",
     gender: "Laki-laki",
-    xpPoints: 350,
+    xpPoints: 420,
     streakDays: 4,
-    collectedStars: 8,
-    completedLevels: [1],
-    targetUrl: "/dashboard/siswa",
+    currentStreak: 4,
+    highestStreak: 7,
+    lastActiveDate: null, // Siap untuk trigger streak hari ini saat beraktivitas!
     avatarSeed: "Ahmad",
+    avatarVariant: "adventurer",
+    selectedBadge: "Detektif Batasan Diri",
+    cardTheme: "teal",
+    collectedStars: 8,
+    completedLevels: [1, 2],
+    targetUrl: "/dashboard/siswa",
   },
   bk_nurul: {
     id: "bk-nurul",
@@ -77,10 +97,16 @@ export const DEMO_USERS: Record<string, DemoUserProfile> = {
     gender: "Perempuan",
     xpPoints: 0,
     streakDays: 0,
+    currentStreak: 0,
+    highestStreak: 0,
+    lastActiveDate: null,
+    avatarSeed: "Nurul",
+    avatarVariant: "adventurer",
+    selectedBadge: "Pelindung Sesama",
+    cardTheme: "teal",
     collectedStars: 0,
     completedLevels: [],
     targetUrl: "/dashboard/bk",
-    avatarSeed: "Nurul",
   },
   peneliti_sarah: {
     id: "peneliti-sarah",
@@ -93,10 +119,16 @@ export const DEMO_USERS: Record<string, DemoUserProfile> = {
     gender: "Perempuan",
     xpPoints: 0,
     streakDays: 0,
+    currentStreak: 0,
+    highestStreak: 0,
+    lastActiveDate: null,
+    avatarSeed: "Sarah",
+    avatarVariant: "adventurer",
+    selectedBadge: "Master Suara Berani",
+    cardTheme: "sky",
     collectedStars: 0,
     completedLevels: [],
     targetUrl: "/dashboard/mahasiswa",
-    avatarSeed: "Sarah",
   },
 };
 
@@ -545,13 +577,45 @@ export function formatUsernameToEmail(identifier: string): string {
   return `${clean}@kenali.local`;
 }
 
+const STORAGE_KEY_STUDENT = "kenali_student_profile_v1";
+
+export function getStoredStudentProfile(): DemoUserProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_STUDENT);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEMO_USERS.ahmad8b, ...parsed };
+    }
+  } catch {
+    // Ignore storage parse errors
+  }
+  return null;
+}
+
+export function saveStoredStudentProfile(profile: DemoUserProfile): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY_STUDENT, JSON.stringify(profile));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 /**
  * Mendapatkan profil pengguna aktif untuk sesi demo atau dari Supabase
  */
 export async function getUserProfile(usernameOrId: string = "ahmad8b"): Promise<DemoUserProfile> {
   const clean = usernameOrId.trim().toLowerCase().replace("@kenali.local", "");
-  
-  // Cek demo accounts terlebih dahulu
+
+  // Jika akun siswa demo Ahmad, cek localStorage terlebih dahulu
+  if (clean === "ahmad8b" || clean === "std-ahmad") {
+    const cached = getStoredStudentProfile();
+    if (cached) return cached;
+    return DEMO_USERS.ahmad8b;
+  }
+
+  // Cek demo accounts lainnya (BK / Peneliti)
   if (DEMO_USERS[clean]) {
     return DEMO_USERS[clean];
   }
@@ -576,11 +640,22 @@ export async function getUserProfile(usernameOrId: string = "ahmad8b"): Promise<
           school: data.school,
           gender: data.gender || "Laki-laki",
           xpPoints: data.xp_points,
-          streakDays: data.streak_days,
+          streakDays: data.streak_days || data.current_streak || 1,
+          currentStreak: data.current_streak || data.streak_days || 1,
+          highestStreak: data.highest_streak || 1,
+          lastActiveDate: data.last_active_date || null,
+          avatarSeed: data.avatar_seed || data.nickname || data.username,
+          avatarVariant: (data.avatar_variant as AvatarVariantType) || "adventurer",
+          selectedBadge: data.selected_badge || "Detektif Batasan Diri",
+          cardTheme: (data.card_theme as CardThemeId) || "teal",
           collectedStars: data.collected_stars,
           completedLevels: data.completed_levels,
-          targetUrl: data.role === "admin_bk" ? "/dashboard/bk" : data.role === "admin_mahasiswa" ? "/dashboard/mahasiswa" : "/dashboard/siswa",
-          avatarSeed: data.nickname || data.username,
+          targetUrl:
+            data.role === "admin_bk"
+              ? "/dashboard/bk"
+              : data.role === "admin_mahasiswa"
+              ? "/dashboard/mahasiswa"
+              : "/dashboard/siswa",
         };
       }
     } catch {
@@ -591,3 +666,85 @@ export async function getUserProfile(usernameOrId: string = "ahmad8b"): Promise<
   // Default fallback ke Ahmad
   return DEMO_USERS.ahmad8b;
 }
+
+/**
+ * Update kustomisasi profil siswa (avatar, nickname, lencana terpilih, tema kartu)
+ * Menyimpan ke Supabase & LocalStorage untuk persistensi instan.
+ */
+export async function updateStudentProfile(
+  studentId: string = "std-ahmad",
+  updates: Partial<DemoUserProfile>
+): Promise<DemoUserProfile> {
+  const current = (await getUserProfile(studentId)) || DEMO_USERS.ahmad8b;
+  const updated: DemoUserProfile = {
+    ...current,
+    ...updates,
+  };
+
+  // Simpan ke local storage
+  saveStoredStudentProfile(updated);
+
+  // Sync ke local DEMO_USERS jika akun Ahmad
+  if (DEMO_USERS.ahmad8b.id === studentId || studentId === "ahmad8b") {
+    DEMO_USERS.ahmad8b = { ...DEMO_USERS.ahmad8b, ...updated };
+  }
+
+  // Kirim ke Supabase jika terhubung
+  const supabase = getClient();
+  if (supabase) {
+    try {
+      await supabase
+        .from("profiles")
+        .update({
+          nickname: updated.nickname,
+          avatar_seed: updated.avatarSeed,
+          avatar_variant: updated.avatarVariant,
+          selected_badge: updated.selectedBadge,
+          card_theme: updated.cardTheme,
+          xp_points: updated.xpPoints,
+          current_streak: updated.currentStreak,
+          highest_streak: updated.highestStreak,
+          streak_days: updated.currentStreak,
+          last_active_date: updated.lastActiveDate,
+        })
+        .eq("id", studentId);
+    } catch {
+      // Graceful fallback to client storage
+    }
+  }
+
+  return updated;
+}
+
+/**
+ * Logika Pencatatan Aktivitas Harian Siswa:
+ * Setiap kali siswa menyelesaikan 1 aktivitas harian (video, mini game, diary):
+ * - Memeriksa tanggal hari ini vs last_active_date
+ * - Jika hari baru, naikkan current_streak + 1, beri bonus +50 XP
+ * - Simpan status ke profile
+ */
+export async function recordDailyActivity(
+  studentId: string = "std-ahmad",
+  activityName: string = "Aktivitas"
+): Promise<StreakUpdateResult> {
+  const profile = await getUserProfile(studentId);
+  const streakCalc = calculateStreakProgress(
+    profile.lastActiveDate,
+    profile.currentStreak || profile.streakDays || 1,
+    profile.highestStreak || 1
+  );
+
+  if (streakCalc.isNewDay) {
+    const updatedXp = profile.xpPoints + streakCalc.xpEarned;
+    await updateStudentProfile(studentId, {
+      currentStreak: streakCalc.currentStreak,
+      highestStreak: streakCalc.highestStreak,
+      streakDays: streakCalc.currentStreak,
+      lastActiveDate: streakCalc.lastActiveDate,
+      xpPoints: updatedXp,
+    });
+  }
+
+  return streakCalc;
+}
+

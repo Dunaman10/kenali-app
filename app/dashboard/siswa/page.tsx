@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -22,12 +22,15 @@ import {
   ChevronLeft,
   Compass,
   Trophy,
+  Palette,
 } from "lucide-react";
 import { PushableButton } from "@/components/ui/pushable-button";
 import { StudentAvatar } from "@/components/ui/student-avatar";
 import { AdventureStepper } from "@/components/ui/adventure-stepper";
 import { MobileBottomNav, type StudentNavZone } from "@/components/layout/mobile-bottom-nav";
 import { EducationalFeedbackSheet } from "@/components/ui/educational-feedback-sheet";
+import { StreakFireWidget } from "@/components/gamification/streak-fire-widget";
+import { StreakShareCard } from "@/components/gamification/streak-share-card";
 import {
   MOCK_VIDEOS,
   MOCK_GAME1_QUESTIONS,
@@ -41,7 +44,18 @@ import {
   type VideoContent,
   type StudentDiaryEntry,
 } from "@/lib/mock-data";
-import { saveStudentDiary, saveScreeningResult } from "@/lib/data-service";
+import {
+  saveStudentDiary,
+  saveScreeningResult,
+  getUserProfile,
+  recordDailyActivity,
+  type DemoUserProfile,
+} from "@/lib/data-service";
+import {
+  type AvatarVariantType,
+  type CardThemeId,
+  type StreakUpdateResult,
+} from "@/lib/gamification";
 import { useGameSound } from "@/lib/sound";
 import { celebrate, confettiBurst, confettiStars } from "@/lib/confetti";
 
@@ -54,13 +68,58 @@ export default function SiswaDashboardPage() {
   const [activeZone, setActiveZone] = useState<ActiveZone>("map");
 
   // Student Gamification Stats
-  const [studentName] = useState("Ahmad Fauzi");
-  const [studentGrade] = useState("Kelas 8B &bull; SMP Al-Falah");
+  const [studentProfile, setStudentProfile] = useState<DemoUserProfile | null>(null);
+  const [studentName, setStudentName] = useState("Ahmad Fauzi");
+  const [studentNickname, setStudentNickname] = useState("Ahmad");
+  const [studentGrade, setStudentGrade] = useState("Kelas 8B • SMP Al-Falah");
   const [xpPoints, setXpPoints] = useState(420);
-  const [streakDays] = useState(3);
+  const [streakDays, setStreakDays] = useState(4);
+  const [highestStreak, setHighestStreak] = useState(7);
+  const [avatarSeed, setAvatarSeed] = useState("Ahmad");
+  const [avatarVariant, setAvatarVariant] = useState<AvatarVariantType>("adventurer");
+  const [selectedBadge, setSelectedBadge] = useState("Detektif Batasan Diri");
+  const [cardTheme, setCardTheme] = useState<CardThemeId>("teal");
   const [collectedStars, setCollectedStars] = useState(8);
   const [maxStars] = useState(10);
   const [completedLevels, setCompletedLevels] = useState<number[]>([1, 2]); // Level 1 & 2 completed, Level 3 active
+
+  // Sharing Card Modal State
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+
+  // Sync with persistent profile
+  useEffect(() => {
+    getUserProfile("ahmad8b").then((p) => {
+      setStudentProfile(p);
+      setStudentName(p.fullName);
+      setStudentNickname(p.nickname || p.fullName.split(" ")[0]);
+      if (p.grade) setStudentGrade(`Kelas ${p.grade} • ${p.school}`);
+      setXpPoints(p.xpPoints);
+      setStreakDays(p.currentStreak || p.streakDays || 4);
+      setHighestStreak(p.highestStreak || 7);
+      setAvatarSeed(p.avatarSeed || p.nickname || "Ahmad");
+      setAvatarVariant(p.avatarVariant || "adventurer");
+      setSelectedBadge(p.selectedBadge || "Detektif Batasan Diri");
+      setCardTheme(p.cardTheme || "teal");
+      setCollectedStars(p.collectedStars || 8);
+      if (p.completedLevels && p.completedLevels.length > 0) {
+        setCompletedLevels(p.completedLevels);
+      }
+    });
+  }, []);
+
+  // Helper untuk notifikasi saat streak harian bertambah
+  const handleStreakNotification = (result: StreakUpdateResult) => {
+    if (result.isNewDay) {
+      setStreakDays(result.currentStreak);
+      setHighestStreak(result.highestStreak);
+      setXpPoints((p) => p + result.xpEarned);
+      setMascotBubble({
+        title: "🔥 Api Streak Bertambah!",
+        text: result.message,
+      });
+      confettiStars();
+    }
+  };
 
   // Video Modal State
   const [activeVideoModal, setActiveVideoModal] = useState<VideoContent | null>(null);
@@ -132,6 +191,11 @@ export default function SiswaDashboardPage() {
       title: "Hebat! Video Selesai!",
       text: "Kamu mendapatkan +50 XP dan +1 Bintang Belajar! Terus jelajahi dunia KENALI!",
     });
+
+    // Catat aktivitas harian & pembaruan streak harian
+    recordDailyActivity("std-ahmad", video.title)
+      .then(handleStreakNotification)
+      .catch(() => {});
   };
 
   const handleSaveDiary = (e: React.FormEvent) => {
@@ -172,6 +236,11 @@ export default function SiswaDashboardPage() {
       freeNote: newEntry.freeNote,
       isPrivate: true,
     }).catch(() => {});
+
+    // Catat aktivitas harian & pembaruan streak harian
+    recordDailyActivity("std-ahmad", "Menulis Diary Cerita")
+      .then(handleStreakNotification)
+      .catch(() => {});
   };
 
   const handleScreeningAnswer = (score: number) => {
@@ -191,11 +260,16 @@ export default function SiswaDashboardPage() {
       setXpPoints((prev) => prev + 50);
       setCollectedStars((s) => Math.min(s + 1, maxStars));
 
+      // Catat aktivitas harian & pembaruan streak harian
+      recordDailyActivity("std-ahmad", "Skrining GAD-7")
+        .then(handleStreakNotification)
+        .catch(() => {});
+
       // Hybrid background save to Supabase / local cache
       saveScreeningResult({
         studentId: "std-ahmad",
         studentName: studentName,
-        nickname: "Ahmad",
+        nickname: studentNickname || "Ahmad",
         gender: "Laki-laki",
         grade: "8B",
         school: "SMP Al-Falah Rempoa",
@@ -231,28 +305,29 @@ export default function SiswaDashboardPage() {
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h1 className="font-display text-sm sm:text-base font-bold text-slate-800 leading-none truncate">
-                  {studentName}
+                  {studentNickname || studentName}
                 </h1>
                 <span className="hidden xs:inline-block text-[9px] sm:text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-300 leading-none shrink-0">
                   Siswa
                 </span>
               </div>
-              <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold leading-none mt-1 truncate">
-                Kelas 8B &bull; SMP Al-Falah
+              <p className="text-[10px] sm:text-[11px] text-teal-700 font-semibold leading-none mt-1 truncate">
+                {selectedBadge}
               </p>
             </div>
           </div>
 
           {/* Gamified Stat Badges */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-            {/* Streak Badge */}
-            <div
-              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-xl bg-orange-50 border-2 border-b-3 border-orange-300 text-orange-700 font-display font-bold text-[11px] sm:text-xs shadow-2xs shrink-0"
-              title="Streak Belajar Aktif"
-            >
-              <Flame className="size-3.5 sm:size-4 text-orange-500 fill-orange-500 animate-pulse shrink-0" />
-              <span>{streakDays} <span className="hidden sm:inline">Hari</span></span>
-            </div>
+            {/* Blazing Interactive Streak Fire Widget */}
+            <StreakFireWidget
+              currentStreak={streakDays}
+              highestStreak={highestStreak}
+              onClick={() => {
+                play("pop");
+                setIsShareModalOpen(true);
+              }}
+            />
 
             {/* Stars Badge */}
             <div
@@ -288,10 +363,23 @@ export default function SiswaDashboardPage() {
               )}
             </button>
 
-            {/* Student Avatar */}
-            <div className="shrink-0">
-              <StudentAvatar seed={studentName} variant="adventurer" size="sm" />
-            </div>
+            {/* Student Avatar (Clickable to customize) */}
+            <Link
+              href="/dashboard/siswa/profile"
+              onClick={() => play("pop")}
+              className="shrink-0 group relative cursor-pointer"
+              title="Kustomisasi Profil & Avatar"
+            >
+              <StudentAvatar
+                seed={avatarSeed}
+                variant={avatarVariant}
+                size="sm"
+                className="group-hover:ring-3 group-hover:ring-teal-400 transition-all shadow-xs"
+              />
+              <span className="absolute -bottom-1 -right-1 size-3.5 rounded-full bg-teal-500 border border-white flex items-center justify-center text-[7px] text-white">
+                ✏️
+              </span>
+            </Link>
           </div>
         </div>
       </header>
@@ -299,7 +387,7 @@ export default function SiswaDashboardPage() {
       {/* -------------------------------------------------------------------------- */}
       {/* MAIN CONTAINER                                                             */}
       {/* -------------------------------------------------------------------------- */}
-      <main className="max-w-4xl mx-auto px-4 pt-6 space-y-8">
+      <main className="max-w-4xl mx-auto px-4 pt-6 space-y-6 sm:space-y-8">
         {/* ========================================================================= */}
         {/* HERO BANNER DENGAN MASKOT TIMBUL 3D (OVERLAPPING / POPPING OUT)          */}
         {/* ========================================================================= */}
@@ -408,6 +496,67 @@ export default function SiswaDashboardPage() {
               </div>
             </div>
           </div>
+        </section>
+
+        {/* ========================================================================= */}
+        {/* BAGIAN 0.5: PAMERKAN PROFIL & KUSTOMISASI KARTU CEPAT                     */}
+        {/* ========================================================================= */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          {/* 1. Tombol Pamerkan Kartu & Streak */}
+          <button
+            onClick={() => {
+              play("fanfare");
+              setIsShareModalOpen(true);
+            }}
+            className="group relative overflow-hidden p-3.5 sm:p-4 rounded-3xl border-2 border-b-5 border-orange-400 bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500 text-white font-display flex items-center justify-between gap-2.5 shadow-md active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer text-left w-full"
+          >
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-1 min-w-0">
+              <div className="size-11 sm:size-12 rounded-2xl bg-white/20 backdrop-blur-xs border border-white/30 flex items-center justify-center text-xl sm:text-2xl shadow-inner group-hover:scale-105 transition-transform shrink-0">
+                🔥
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-amber-100 truncate">
+                  Kartu Pamer Eksklusif
+                </span>
+                <h4 className="font-black text-sm sm:text-base text-white leading-tight truncate mt-0.5">
+                  Pamerkan Profil &amp; Streak-mu!
+                </h4>
+                <p className="text-[11px] font-semibold text-amber-100/90 mt-0.5 truncate">
+                  {streakDays} Hari &bull; {selectedBadge}
+                </p>
+              </div>
+            </div>
+            <div className="size-8 sm:size-9 rounded-xl bg-white/20 group-hover:bg-white text-white group-hover:text-orange-900 border border-white/30 flex items-center justify-center transition-all shrink-0 shadow-2xs">
+              <ArrowRight className="size-4 shrink-0" />
+            </div>
+          </button>
+
+          {/* 2. Tombol Kustomisasi Profil */}
+          <Link
+            href="/dashboard/siswa/profile"
+            onClick={() => play("pop")}
+            className="group relative overflow-hidden p-3.5 sm:p-4 rounded-3xl border-2 border-b-5 border-teal-500 bg-white hover:bg-teal-50/50 text-slate-800 font-display flex items-center justify-between gap-2.5 shadow-sm active:border-b-2 active:translate-y-[2px] transition-all text-left w-full"
+          >
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-1 min-w-0">
+              <div className="size-11 sm:size-12 rounded-2xl bg-teal-50 border-2 border-teal-200 flex items-center justify-center text-xl sm:text-2xl group-hover:scale-105 transition-transform shrink-0">
+                🎨
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-teal-600 truncate">
+                  Kamar Ganti Siswa
+                </span>
+                <h4 className="font-black text-sm sm:text-base text-slate-800 leading-tight truncate mt-0.5">
+                  Kustomisasi Profil &amp; Avatar
+                </h4>
+                <p className="text-[11px] font-medium text-slate-500 mt-0.5 truncate">
+                  Ubah avatar, nama &amp; lencana
+                </p>
+              </div>
+            </div>
+            <div className="size-8 sm:size-9 rounded-xl bg-teal-500 group-hover:bg-teal-600 text-white flex items-center justify-center transition-all shrink-0 shadow-2xs">
+              <ArrowRight className="size-4 shrink-0" />
+            </div>
+          </Link>
         </section>
 
         {/* ========================================================================= */}
@@ -1014,6 +1163,9 @@ export default function SiswaDashboardPage() {
                             play("fanfare");
                             celebrate();
                             setXpPoints((p) => p + 40);
+                            recordDailyActivity("std-ahmad", "Mini Game 1: Batasan Diri")
+                              .then(handleStreakNotification)
+                              .catch(() => {});
                             setGame1SelectedOpt(null);
                             setActiveGameId(2);
                           }
@@ -1120,6 +1272,9 @@ export default function SiswaDashboardPage() {
                             play("fanfare");
                             celebrate();
                             setXpPoints((p) => p + 40);
+                            recordDailyActivity("std-ahmad", "Mini Game 2: Radar Situasi")
+                              .then(handleStreakNotification)
+                              .catch(() => {});
                             setGame2SelectedCat(null);
                             setActiveGameId(3);
                           }
@@ -1215,6 +1370,9 @@ export default function SiswaDashboardPage() {
                             celebrate();
                             setXpPoints((p) => p + 40);
                             setCollectedStars((s) => Math.min(s + 1, maxStars));
+                            recordDailyActivity("std-ahmad", "Mini Game 3: Pilih Responmu")
+                              .then(handleStreakNotification)
+                              .catch(() => {});
                             setGame3SelectedChoice(null);
                             setActiveZone("map");
                             setMascotBubble({
@@ -1695,6 +1853,26 @@ export default function SiswaDashboardPage() {
             setActiveGameId(1);
           }
         }}
+      />
+
+      {/* -------------------------------------------------------------------------- */}
+      {/* KARTU PAMER STREAK & PENCAPAIAN MODAL                                      */}
+      {/* -------------------------------------------------------------------------- */}
+      <StreakShareCard
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        studentName={studentName}
+        studentNickname={studentNickname}
+        studentGrade={studentGrade}
+        avatarSeed={avatarSeed}
+        avatarVariant={avatarVariant}
+        selectedBadgeName={selectedBadge}
+        cardTheme={cardTheme}
+        currentStreak={streakDays}
+        highestStreak={highestStreak}
+        xpPoints={xpPoints}
+        collectedStars={collectedStars}
+        maxStars={maxStars}
       />
     </div>
   );

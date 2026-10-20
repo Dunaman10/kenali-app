@@ -59,11 +59,27 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   gender TEXT CHECK (gender IN ('Laki-laki', 'Perempuan')),
   xp_points INTEGER NOT NULL DEFAULT 0,
   streak_days INTEGER NOT NULL DEFAULT 0,
+  current_streak INTEGER NOT NULL DEFAULT 1,
+  highest_streak INTEGER NOT NULL DEFAULT 1,
+  last_active_date DATE DEFAULT CURRENT_DATE,
+  avatar_seed TEXT DEFAULT 'Ahmad',
+  avatar_variant TEXT DEFAULT 'adventurer',
+  selected_badge TEXT DEFAULT 'Detektif Batasan Diri',
+  card_theme TEXT DEFAULT 'teal',
   collected_stars INTEGER NOT NULL DEFAULT 0,
   completed_levels INTEGER[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migrasi tambahan untuk tabel profiles yang sudah ada
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS current_streak INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS highest_streak INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_active_date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_seed TEXT DEFAULT 'Ahmad';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_variant TEXT DEFAULT 'adventurer';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS selected_badge TEXT DEFAULT 'Detektif Batasan Diri';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS card_theme TEXT DEFAULT 'teal';
 
 -- Tabel Videos (3 Modul Edukasi Interaktif)
 CREATE TABLE IF NOT EXISTS public.videos (
